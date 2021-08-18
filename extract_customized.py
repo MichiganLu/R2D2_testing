@@ -9,11 +9,16 @@ import numpy as np
 import torch
 import glob
 import cv2
+import timeit
+import pandas as pd
+from scipy.spatial.transform import Rotation as R
 
 from tools import common
 from tools.dataloader import norm_RGB
 from nets.patchnet import *
 
+#define intrinsic matrix
+mint = np.array([[458.654,0,367.215],[0,457.296,248.375],[0,0,1]]) #remember to change it for different cam
 
 def load_network(model_fn): 
     checkpoint = torch.load(model_fn)
@@ -169,12 +174,38 @@ def extract_keypoints(args):
     if args.images != None:
         img_pth = args.images
         imgs = sorted(glob.glob(img_pth+'*'))
+        imgs = imgs[:500]
         #imgs = glob.glob(img_pth+'*.ppm')
-        print(f"\nExtracting features for {img_pth}")
+        dict1 = {'detected_matches':[],'valid_matches':[],'inlier_rate':[],'detection_time':[],
+                 'EulerZ_error':[],'EulerY_error':[],'EulerX_error':[],'t1_error':[],'t2_error':[],'t3_error':[]}
 
-        for i in range(0,len(imgs),2):
+        print(f"\nExtracting features for {img_pth}")
+        #input ground truth dataframe path here
+        if args.gtcsv != '':
+            gt_dataframe = pd.read_csv(args.gtcsv,usecols=[i for i in range(1,8)],nrows=500)
+
+        for i in range(0,len(imgs)-5,5):
+            #time the detection
+            start = timeit.default_timer()
             kp1, desc1 = return_keypoints(imgs[i],args,iscuda,net,detector)
             kp2, desc2 = return_keypoints(imgs[i+1],args,iscuda,net,detector)
+            stop = timeit.default_timer()
+            dict1['detection_time'].append(stop-start)
+
+            #get ground truth
+            if args.gtcsv != '':
+                t1 = gt_dataframe.iloc[i, 0:3].to_numpy()
+                t2 = gt_dataframe.iloc[i + 1, 0:3].to_numpy()
+                gt_t = t2-t1
+                quaternion1 = gt_dataframe.iloc[i, 3:8].to_numpy()
+                quaternion1_scaler_last = np.array([quaternion1[1], quaternion1[2], quaternion1[3], quaternion1[0]])
+                rotation1 = R.from_quat(quaternion1_scaler_last).as_matrix()
+                quaternion2 = gt_dataframe.iloc[i + 1, 3:8].to_numpy()
+                quaternion2_scaler_last = np.array([quaternion2[1], quaternion2[2], quaternion2[3], quaternion2[0]])
+                rotation2 = R.from_quat(quaternion2_scaler_last).as_matrix()
+                gt_rotation = rotation2 @ rotation1.T
+
+
             img1 = cv2.imread(imgs[i])
             img2 = cv2.imread(imgs[i+1])
             '''
@@ -186,8 +217,9 @@ def extract_keypoints(args):
             matches = flann.knnMatch(desc1,desc2,k=1)  #return best matches, it is a list of list
             matches = [item for sublist in matches for item in sublist] #unpack list of list
             '''
-            bf = cv2.BFMatcher(cv2.NORM_L2,crossCheck=True)
+            bf = cv2.BFMatcher(cv2.NORM_L2,crossCheck=False)
             matches = bf.match(desc1,desc2)
+            dict1['detected_matches'].append(len(matches))
             matches_idx1 = np.array([k.queryIdx for k in matches])
             m_kp1 = [kp1[idx] for idx in matches_idx1]
             m_kp1 = np.vstack(m_kp1)
@@ -196,15 +228,46 @@ def extract_keypoints(args):
             m_kp2 = [kp2[idx] for idx in matches_idx2]
             m_kp2 = np.vstack(m_kp2)
             H, inliers = compute_homography(m_kp1, m_kp2)
+            valid_match = np.sum(inliers)
+            dict1['valid_matches'].append(valid_match)
+            dict1['inlier_rate'].append(valid_match/len(matches))
             print('**************************************')##1
-            print(f"Total matches for match{i}.jpg is {np.sum(inliers)}, outlier rate is {1-np.sum(inliers)/len(matches)}")##1
+            print(f"Total matches for match{i}.jpg is {valid_match}, outlier rate is {1-valid_match/len(matches)}")##1
             #print(H)
             # Draw matches
             #matches = np.array(matches)[inliers.astype(bool)].tolist()  #throw away outlier matches
             finalkp1 = m_kp1[inliers.astype(bool)]
             finalkp2 = m_kp2[inliers.astype(bool)]
             #print(finalkp1.shape)##1
-            
+
+            #get correct pose, you will have four sets of solution, only one with both positive z value for two cameras
+            num, Rs, Ts, Ns = cv2.decomposeHomographyMat(H, mint)
+            for j in range(len(Rs)):
+                left_projection = mint @ np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]) #world-coor
+                right_projection = mint @ np.concatenate((Rs[j], Ts[j]), axis=1)
+                triangulation = cv2.triangulatePoints(left_projection, right_projection, finalkp1[0], finalkp2[0]) #point in world-coor
+                triangulation = triangulation/triangulation[3] #make it homogeneous (x,y,z,1)
+                if triangulation[2] > 0:  #z is positive
+                    point_in_cam2 = np.concatenate((Rs[j], Ts[j]), axis=1) @ triangulation #change to cam2 coordinate
+                    if point_in_cam2[2] > 0:  #z is positive
+                        rotation = Rs[j]
+                        translation = Ts[j].squeeze()
+                        break
+                else:
+                    continue
+            #record error
+            if args.gtcsv != '':
+                delta_rotation = rotation.T @ gt_rotation
+                euler_error = R.from_matrix(delta_rotation).as_euler('zyx', degrees=True)
+                delta_t = translation - gt_t
+                dict1['t1_error'].append(delta_t[0])
+                dict1['t2_error'].append(delta_t[1])
+                dict1['t3_error'].append(delta_t[2])
+                dict1['EulerZ_error'].append(euler_error[0])
+                dict1['EulerY_error'].append(euler_error[1])
+                dict1['EulerX_error'].append(euler_error[2])
+
+
             #plot
             # initialize the output visualization image
             (hA, wA) = img1.shape[:2]     #cv2.imread returns (h,w,c)
@@ -225,12 +288,16 @@ def extract_keypoints(args):
                 cv2.circle(vis,ptB,3,color=(0,0,255))
             cv2.imwrite('./output/'+'match'+str(i)+'.jpg',vis)
             print('outputting matching'+str(i))
+        #save csv to dict
+        if args.gtcsv != '':
+            df1 = pd.DataFrame.from_dict(dict1)
+            df1.to_csv('./output/evaluation.csv')
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser("Extract keypoints for a given image")
     parser.add_argument("--model", type=str, required=True, help='model path')
-    
+    parser.add_argument("--gtcsv",type=str, default='', help='path to ground truth csv file')
     parser.add_argument("--images", type=str, required=True, help='image directory')
     parser.add_argument("--tag", type=str, default='r2d2', help='output file tag')
     

@@ -1,4 +1,5 @@
 # R2D2: Reliable and Repeatable Detector and Descriptor #
+This repository is an adaptation of the original R2D2 implementation so that it can be run in your own dataset and produce matching image output. This work will not be possible without the help of the original implementation. 
 This repository contains the implementation of the following [paper](https://europe.naverlabs.com/research/publications/r2d2-reliable-and-repeatable-detectors-and-descriptors-for-joint-sparse-local-keypoint-detection-and-feature-extraction/):
 
 ```text
@@ -49,9 +50,9 @@ To extract keypoints for a given image, simply execute:
 ```bash
 python extract.py --model models/r2d2_WASF_N16.pt --images imgs/brooklyn.png --top-k 5000
 ```
-To extract keypoints for an entire dataset, simply execute(change to your path after --images):
+To extract keypoints for an entire dataset, simply execute(change to your path after --images, don't forget the last“/”):
 ```bash
-python extract_customized.py --model ./models/r2d2_WASF_N16.pt --images ./input/EuRoc/ --top-k 1000
+python extract_customized.py --model ./models/r2d2_WASF_N16.pt --images /home/cvte-vm/Datasets/EuRoc/MH_03_medium/mav0/cam0/data/ --gtcsv /home/cvte-vm/Datasets/EuRoc/MH_03_medium/mav0/state_groundtruth_estimate0/data.csv --top-k 1000
 ```
 The first command will save the `top-k` keypoints in a file with the same path as the image and a `.r2d2` extension. 
 For the second command, the feature-point matching images will be exported to the output folder.
