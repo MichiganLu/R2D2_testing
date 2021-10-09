@@ -188,19 +188,19 @@ def extract_keypoints(args):
             #time the detection
             start = timeit.default_timer()
             kp1, desc1 = return_keypoints(imgs[i],args,iscuda,net,detector)
-            kp2, desc2 = return_keypoints(imgs[i+1],args,iscuda,net,detector)
+            kp2, desc2 = return_keypoints(imgs[i+5],args,iscuda,net,detector)
             stop = timeit.default_timer()
             dict1['detection_time'].append(stop-start)
 
             #get ground truth
             if args.gtcsv != '':
                 t1 = gt_dataframe.iloc[i, 0:3].to_numpy()
-                t2 = gt_dataframe.iloc[i + 1, 0:3].to_numpy()
+                t2 = gt_dataframe.iloc[i + 5, 0:3].to_numpy()
                 gt_t = t2-t1
                 quaternion1 = gt_dataframe.iloc[i, 3:8].to_numpy()
                 quaternion1_scaler_last = np.array([quaternion1[1], quaternion1[2], quaternion1[3], quaternion1[0]])
                 rotation1 = R.from_quat(quaternion1_scaler_last).as_matrix()
-                quaternion2 = gt_dataframe.iloc[i + 1, 3:8].to_numpy()
+                quaternion2 = gt_dataframe.iloc[i + 5, 3:8].to_numpy()
                 quaternion2_scaler_last = np.array([quaternion2[1], quaternion2[2], quaternion2[3], quaternion2[0]])
                 rotation2 = R.from_quat(quaternion2_scaler_last).as_matrix()
                 gt_rotation = rotation2 @ rotation1.T
